@@ -1,0 +1,48 @@
+{
+  "name": "dsh-whale-send",
+  "version": "0.1.0",
+  "description": "Play the original DeepSeek whale on the first send and fade into chat.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js"
+  },
+  "engines": {
+    "node": ">=24.9.0",
+    "dsh": "0.2.2-rc.4"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_LICENSES.md"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check client.js && node --check index.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-brand-official"
+      ]
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/averyjohnkucan-arch/dsh-whale-send.git"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-client-ui-brand-official": "0.2.2-rc.4",
+    "puppeteer": "24.43.1"
+  }
+}
