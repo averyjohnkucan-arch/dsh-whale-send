@@ -1,6 +1,6 @@
 {
   "name": "dsh-whale-send",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Play the original DeepSeek whale on the first send and fade into chat.",
   "type": "module",
   "license": "MIT",

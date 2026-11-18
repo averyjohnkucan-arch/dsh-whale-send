@@ -45,11 +45,31 @@ test("the whale moves during both fades and the submitted text floats to the scr
   await page.goto(url);
   await page.evaluate(() => {
     window.samples = [];
+    window.ditherPaints = [];
     const watch = new MutationObserver(() => {
       const layer = document.querySelector("[data-whale-send]");
       if (!layer) return;
       watch.disconnect();
       const start = performance.now();
+      const ctx = layer.querySelector("canvas").getContext("2d");
+      const { clearRect, arc, fill } = ctx;
+      let paint;
+      ctx.clearRect = function (...args) {
+        const elapsed = performance.now() - start;
+        paint = elapsed > 1000 && elapsed < 2000
+          ? { elapsed, pose: [], alphas: [] }
+          : undefined;
+        if (paint) ditherPaints.push(paint);
+        clearRect.apply(this, args);
+      };
+      ctx.arc = function (x, y, radius, ...angles) {
+        if (paint) paint.pose.push(x, y, radius);
+        arc.call(this, x, y, radius, ...angles);
+      };
+      ctx.fill = function (...args) {
+        if (paint) paint.alphas.push(this.globalAlpha);
+        fill.apply(this, args);
+      };
       function sample(now) {
         const elapsed = now - start;
         samples.push([
@@ -148,6 +168,21 @@ test("the whale moves during both fades and the submitted text floats to the scr
     timeout: 10000,
   });
   const samples = await page.evaluate(() => window.samples);
+  const paints = await page.evaluate(() => window.ditherPaints);
+  assert.ok(paints.length > 24, "The dots repaint faster than the pose advances");
+  assert.ok(
+    paints.some((current, index) => {
+      const previous = paints[index - 1];
+      return (
+        previous &&
+        previous.pose.length === current.pose.length &&
+        previous.pose.every((value, i) => value === current.pose[i]) &&
+        previous.alphas.some((value, i) => value > current.alphas[i]) &&
+        previous.alphas.some((value, i) => value < current.alphas[i])
+      );
+    }),
+    "Different dots brighten and dim independently while the whale pose holds",
+  );
   const fade = samples.filter(
     ([, opacity, connected]) => connected && opacity < 1 && opacity > 0,
   );

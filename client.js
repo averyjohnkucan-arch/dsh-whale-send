@@ -7,6 +7,7 @@ window.__ModuleLoader__.load({
     );
     const duration = 5700;
     const fadeDuration = 500;
+    const ditherHz = 40;
     // The RC4 sheet has a long transparent tail. These frames span the
     // visible emergence and final splash, including both crossfades.
     const firstFrame = 12,
@@ -39,7 +40,7 @@ window.__ModuleLoader__.load({
     }
 
     // Draw RC4's dot-fill artwork in the original home canvas geometry.
-    function paint(ctx, pixels, frame, w, h) {
+    function paint(ctx, pixels, frame, ditherStep, w, h) {
       ctx.clearRect(0, 0, w, h);
       const scene = Math.min(Math.max(w * 0.94, 720), h * 1.6, 1120) * 1.12;
       const cell = scene / width;
@@ -51,12 +52,19 @@ window.__ModuleLoader__.load({
           (frame % columns) * width) *
         4;
       const alpha = 0.65 * 0.8;
+      const phaseSeed = Math.imul(ditherStep + 1, 0x9e3779b1);
       for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
           const i = offset + (y * stride + x) * 4;
           const mask = pixels[i + 1] / 255;
           if (mask < 0.015) continue;
-          ctx.globalAlpha = mask * alpha;
+          // The mean of the two levels retains the atlas opacity. Hash each
+          // dot separately so brightening and dimming happen side by side.
+          let hash = (y * width + x) ^ phaseSeed;
+          hash = Math.imul(hash ^ (hash >>> 16), 0x45d9f3b);
+          hash = Math.imul(hash ^ (hash >>> 16), 0x45d9f3b);
+          const brightness = ((hash ^ (hash >>> 16)) & 1) === 0 ? 0.2 : 1.8;
+          ctx.globalAlpha = mask * alpha * brightness;
           ctx.beginPath();
           ctx.arc(
             left + (x + 0.5) * cell,
@@ -350,6 +358,7 @@ window.__ModuleLoader__.load({
         if (!pixels || media.matches || document.hidden) return reset();
         const began = performance.now();
         let lastFrame = -1;
+        let lastDitherStep = -1;
         function tick(now) {
           const elapsed = now - began,
             w = canvas.clientWidth,
@@ -373,9 +382,11 @@ window.__ModuleLoader__.load({
               lastVisibleFrame - firstFrame,
               Math.floor(progress * (lastVisibleFrame - firstFrame + 1)),
             );
-          if (frame !== lastFrame) {
-            paint(ctx, pixels, frame, w, h);
+          const ditherStep = Math.floor((elapsed * ditherHz) / 1000);
+          if (frame !== lastFrame || ditherStep !== lastDitherStep) {
+            paint(ctx, pixels, frame, ditherStep, w, h);
             lastFrame = frame;
+            lastDitherStep = ditherStep;
           }
           const opening = Math.min(1, elapsed / fadeDuration);
           const mix = opening * opening * (3 - 2 * opening);
