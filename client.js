@@ -9,12 +9,12 @@ window.__ModuleLoader__.load({
     const fadeDuration = 500;
     const ditherHz = 40;
     const settingsKey = "dsh-whale-send.preferences";
-    let preferences = { dithering: true, water: false };
+    let preferences = { dithering: true, water: true };
     try {
       const saved = JSON.parse(localStorage.getItem(settingsKey));
       preferences = {
         dithering: saved?.dithering !== false,
-        water: saved?.water === true,
+        water: saved?.water !== false,
       };
     } catch {
       // Defaults still work when storage is unavailable.
@@ -250,7 +250,7 @@ window.__ModuleLoader__.load({
             const intensity =
               0.76 + 0.24 * Math.sin(column * 2.3 + row * 1.8 - time * 0.51);
             const index = (y * w + x) * 4;
-            field.data[index + 3] = 7 + 42 * intensity * Math.exp(-gap * gap);
+            field.data[index + 3] = 10 + 62 * intensity * Math.exp(-gap * gap);
           }
         }
         ctx.putImageData(field, 0, 0);
@@ -590,7 +590,7 @@ window.__ModuleLoader__.load({
           chrome.style.opacity = String(1 - mix);
           if (water) {
             water.draw(elapsed);
-            water.canvas.style.opacity = String(mix * (0.92 - 0.56 * progress));
+            water.canvas.style.opacity = String(mix * (0.96 - 0.44 * progress));
           }
           const t = Math.min(
             1,

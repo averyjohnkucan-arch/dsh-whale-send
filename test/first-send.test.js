@@ -53,7 +53,9 @@ test("the whale moves during both fades and the submitted text floats to the scr
       if (!layer) return;
       watch.disconnect();
       const start = performance.now();
-      const ctx = layer.querySelector("canvas").getContext("2d");
+      const ctx = layer
+        .querySelector("canvas:not([data-whale-water])")
+        .getContext("2d");
       const { clearRect, arc, fill } = ctx;
       let paint;
       ctx.clearRect = function (...args) {
@@ -88,7 +90,7 @@ test("the whale moves during both fades and the submitted text floats to the scr
           (() => {
             if (!(elapsed < 500 || (elapsed > 5200 && elapsed < 5600)))
               return false;
-            const c = layer.querySelector("canvas");
+            const c = layer.querySelector("canvas:not([data-whale-water])");
             return c
               .getContext("2d")
               .getImageData(0, 0, c.width, c.height)
@@ -110,7 +112,7 @@ test("the whale moves during both fades and the submitted text floats to the scr
   await page.type("textarea", "My first message");
   await page.click("button");
   await page.waitForSelector("[data-whale-text]");
-  assert.equal(await page.$("[data-whale-water]"), null);
+  await page.waitForSelector("[data-whale-water]");
   assert.equal(
     await page.$eval("[data-whale-text]", (e) => e.textContent),
     "My first message",
@@ -120,16 +122,20 @@ test("the whale moves during both fades and the submitted text floats to the scr
       e.textContent.includes("Welcome heading"),
     ),
   );
-  await page.waitForSelector("[data-whale-send] canvas");
+  await page.waitForSelector(
+    "[data-whale-send] canvas:not([data-whale-water])",
+  );
   assert.equal(
     await page.$eval(
-      "[data-whale-send] canvas",
+      "[data-whale-send] canvas:not([data-whale-water])",
       (c) => getComputedStyle(c).opacity,
     ),
     "0.36",
   );
   await page.waitForFunction(() => {
-    const c = document.querySelector("[data-whale-send] canvas");
+    const c = document.querySelector(
+      "[data-whale-send] canvas:not([data-whale-water])",
+    );
     return (
       c &&
       c
@@ -253,7 +259,10 @@ test("the whale moves during both fades and the submitted text floats to the scr
   await page.click("button");
   await page.waitForFunction(() => {
     const water = document.querySelector("[data-whale-water]");
-    return water && Number(water.style.opacity) > 0.8;
+    return (
+      water &&
+      document.querySelector("[data-whale-chrome]").style.opacity === "0"
+    );
   });
   const result = await page.evaluate(async () => {
     const water = document.querySelector("[data-whale-water]");
@@ -286,8 +295,8 @@ test("the whale moves during both fades and the submitted text floats to the scr
           (value, index) => index % 4 === 3 && value !== start.pixels[index],
         ) && Number(water.style.opacity) < start.opacity,
       subtle:
-        pixels.some((value, index) => index % 4 === 3 && value > 20) &&
-        pixels.every((value, index) => index % 4 !== 3 || value < 55),
+        pixels.some((value, index) => index % 4 === 3 && value > 50) &&
+        pixels.every((value, index) => index % 4 !== 3 || value < 75),
       paintCount,
     };
   });
@@ -298,5 +307,17 @@ test("the whale moves during both fades and the submitted text floats to the scr
   assert.ok(
     result.paintCount > 8 && result.paintCount < 24,
     "Disabling dithering uses the atlas frame rate",
+  );
+
+  await page.evaluate(() => {
+    localStorage.setItem("dsh-whale-send.preferences", '{"water":false}');
+  });
+  await page.reload();
+  await page.click("button");
+  await page.waitForSelector("[data-whale-send] canvas");
+  assert.equal(
+    await page.$("[data-whale-water]"),
+    null,
+    "A saved Off choice is preserved",
   );
 });
