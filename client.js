@@ -82,7 +82,7 @@ window.__ModuleLoader__.load({
         toggle(
           "water",
           "Water ripple background",
-          "Fill the conversation pane with grey dots that ripple and slowly fade.",
+          "Add a faint, shifting pool-light pattern to the grey dots.",
         ),
       );
     }
@@ -168,23 +168,98 @@ window.__ModuleLoader__.load({
     }
 
     function makeWater(color) {
-      const water = document.createElement("div");
-      water.dataset.whaleWater = "";
-      water.style.cssText = `
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return null;
+      canvas.dataset.whaleWater = "";
+      canvas.style.cssText = `
         position:absolute;
         inset:0;
+        width:100%;
+        height:100%;
         pointer-events:none;
+        filter:grayscale(1);
         mask-image:radial-gradient(circle at center, black 0.8px, transparent 1.35px);
-        background:repeating-radial-gradient(
-          ellipse at var(--ripple-x, 44%) 72%,
-          color-mix(in srgb, currentColor 32%, transparent) var(--ripple-offset, 0px),
-          color-mix(in srgb, currentColor 8%, transparent) calc(var(--ripple-offset, 0px) + 56px),
-          color-mix(in srgb, currentColor 32%, transparent) calc(var(--ripple-offset, 0px) + 112px)
-        );
       `;
-      water.style.color = color;
-      water.style.filter = "grayscale(1)";
-      return water;
+
+      const sampleSize = 8;
+      const cellSize = 124;
+      let field, columns, sites;
+      let lastStep = -1;
+      function resize(w, h) {
+        canvas.width = w;
+        canvas.height = h;
+        field = ctx.createImageData(w, h);
+        columns = Math.ceil((w * sampleSize) / cellSize) + 4;
+        const rows = Math.ceil((h * sampleSize) / cellSize) + 4;
+        let seed = 271828;
+        function sample() {
+          seed ^= seed << 13;
+          seed ^= seed >>> 17;
+          seed ^= seed << 5;
+          return (seed >>> 0) / 0x100000000;
+        }
+        sites = Array.from({ length: rows * columns }, (_, i) => ({
+          x: (i % columns) - 2 + 0.1 + sample() * 0.8,
+          y: Math.floor(i / columns) - 2 + 0.1 + sample() * 0.8,
+          phase: sample() * Math.PI * 2,
+        }));
+      }
+
+      function draw(elapsed) {
+        const step = Math.floor(elapsed / 50);
+        const w = Math.max(1, Math.ceil(canvas.clientWidth / sampleSize));
+        const h = Math.max(1, Math.ceil(canvas.clientHeight / sampleSize));
+        if (!field || w !== field.width || h !== field.height) resize(w, h);
+        else if (step === lastStep) return;
+        lastStep = step;
+        const time = elapsed / 1000;
+        for (const site of sites) {
+          site.movedX = site.x + 0.19 * Math.sin(time * 0.56 + site.phase);
+          site.movedY = site.y + 0.16 * Math.cos(time * 0.42 + site.phase);
+        }
+
+        // Light collects between drifting sites. Warp the coordinates so
+        // the bright seams bend and flow like light on a pool floor.
+        for (let y = 0; y < h; y++) {
+          const row = (y * sampleSize) / cellSize;
+          for (let x = 0; x < w; x++) {
+            const column = (x * sampleSize) / cellSize;
+            const warpedX =
+              column + 0.19 * Math.sin(row * 3.3 + column * 0.9 - time * 0.47);
+            const warpedY =
+              row + 0.18 * Math.sin(column * 4.1 - row * 1.3 + time * 0.45);
+            const origin =
+              (Math.floor(warpedY) + 1) * columns + Math.floor(warpedX) + 1;
+            let nearest = Infinity,
+              next = Infinity;
+            for (let dy = 0; dy < 3; dy++) {
+              for (let dx = 0; dx < 3; dx++) {
+                const site = sites[origin + dy * columns + dx];
+                const distance =
+                  (warpedX - site.movedX) ** 2 + (warpedY - site.movedY) ** 2;
+                if (distance < nearest) {
+                  next = nearest;
+                  nearest = distance;
+                } else if (distance < next) {
+                  next = distance;
+                }
+              }
+            }
+            const gap = (next - nearest) / 0.13;
+            const intensity =
+              0.76 + 0.24 * Math.sin(column * 2.3 + row * 1.8 - time * 0.51);
+            const index = (y * w + x) * 4;
+            field.data[index + 3] = 7 + 42 * intensity * Math.exp(-gap * gap);
+          }
+        }
+        ctx.putImageData(field, 0, 0);
+        ctx.globalCompositeOperation = "source-in";
+        ctx.fillStyle = color;
+        ctx.fillRect(0, 0, w, h);
+        ctx.globalCompositeOperation = "source-over";
+      }
+      return { canvas, draw };
     }
 
     const visualStyle = (node, source, properties) => {
@@ -458,7 +533,7 @@ window.__ModuleLoader__.load({
         const water = attempt.preferences.water
           ? makeWater(attempt.color)
           : null;
-        if (water) layer.prepend(water);
+        if (water) layer.prepend(water.canvas);
         // Attach before the next paint, even while the atlas is decoding.
         // RC4 owns the live session underneath and submits immediately.
         pane.append(layer);
@@ -489,8 +564,8 @@ window.__ModuleLoader__.load({
             ctx.fillStyle = attempt.color;
             grid = dotGrid(w, h);
             if (water) {
-              water.style.maskSize = `${grid.cell}px ${grid.cell}px`;
-              water.style.maskPosition = `${canvas.offsetLeft + grid.left}px ${canvas.offsetTop + grid.top}px`;
+              water.canvas.style.maskSize = `${grid.cell}px ${grid.cell}px`;
+              water.canvas.style.maskPosition = `${canvas.offsetLeft + grid.left}px ${canvas.offsetTop + grid.top}px`;
             }
             lastFrame = -1;
           }
@@ -514,12 +589,8 @@ window.__ModuleLoader__.load({
           text.style.transform = `translate(${travel.x * mix}px, ${travel.y * mix}px)`;
           chrome.style.opacity = String(1 - mix);
           if (water) {
-            water.style.setProperty(
-              "--ripple-x",
-              `${44 + 11 * Math.sin(progress * Math.PI)}%`,
-            );
-            water.style.setProperty("--ripple-offset", `${elapsed * 0.032}px`);
-            water.style.opacity = String(mix * (0.92 - 0.56 * progress));
+            water.draw(elapsed);
+            water.canvas.style.opacity = String(mix * (0.92 - 0.56 * progress));
           }
           const t = Math.min(
             1,

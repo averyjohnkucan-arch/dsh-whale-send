@@ -257,12 +257,15 @@ test("the whale moves during both fades and the submitted text floats to the scr
   });
   const result = await page.evaluate(async () => {
     const water = document.querySelector("[data-whale-water]");
+    const waterContext = water.getContext("2d");
+    const sampleField = () =>
+      waterContext.getImageData(0, 0, water.width, water.height).data;
     const start = {
       opacity: Number(water.style.opacity),
-      ripple: water.style.getPropertyValue("--ripple-offset"),
+      pixels: sampleField(),
     };
     const context = document
-      .querySelector("[data-whale-send] canvas")
+      .querySelector("[data-whale-send] canvas:not([data-whale-water])")
       .getContext("2d");
     const clearRect = context.clearRect;
     let paintCount = 0;
@@ -272,20 +275,26 @@ test("the whale moves during both fades and the submitted text floats to the scr
     };
     await new Promise((resolve) => setTimeout(resolve, 1000));
     context.clearRect = clearRect;
+    const pixels = sampleField();
     return {
       mask: getComputedStyle(water).maskImage,
       spansPane:
         water.offsetWidth === water.parentElement.offsetWidth &&
         water.offsetHeight === water.parentElement.offsetHeight,
       movedAndFaded:
-        water.style.getPropertyValue("--ripple-offset") !== start.ripple &&
-        Number(water.style.opacity) < start.opacity,
+        pixels.some(
+          (value, index) => index % 4 === 3 && value !== start.pixels[index],
+        ) && Number(water.style.opacity) < start.opacity,
+      subtle:
+        pixels.some((value, index) => index % 4 === 3 && value > 20) &&
+        pixels.every((value, index) => index % 4 !== 3 || value < 55),
       paintCount,
     };
   });
   assert.match(result.mask, /radial-gradient/);
   assert.ok(result.spansPane);
   assert.ok(result.movedAndFaded);
+  assert.ok(result.subtle);
   assert.ok(
     result.paintCount > 8 && result.paintCount < 24,
     "Disabling dithering uses the atlas frame rate",
