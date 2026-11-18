@@ -6,7 +6,7 @@ window.__ModuleLoader__.load({
       "plugins/@deepseek-ai/dsh-client-ui-brand-official/assets/breach-atlas-43c5305a3d4d.webp",
     );
     const duration = 5700;
-    const fadeDuration = 250;
+    const fadeDuration = 500;
     const width = 192,
       height = 108,
       columns = 12,
@@ -68,6 +68,181 @@ window.__ModuleLoader__.load({
       ctx.globalAlpha = 1;
     }
 
+    const visualStyle = (node, source, properties) => {
+      for (const property of properties.split(" "))
+        node.style.setProperty(property, source.getPropertyValue(property));
+    };
+
+    function place(node, rect) {
+      Object.assign(node.style, {
+        position: "absolute",
+        left: rect.left + "px",
+        top: rect.top + "px",
+        width: rect.width + "px",
+        height: rect.height + "px",
+        boxSizing: "border-box",
+        margin: "0",
+        pointerEvents: "none",
+      });
+      return node;
+    }
+
+    const typography =
+      "font-family font-size font-weight font-style font-variant line-height letter-spacing word-spacing text-align text-transform white-space direction overflow-wrap tab-size";
+
+    // Capture only painted shapes and text. No duplicate controls, IDs, handlers,
+    // embeds, or editable fields are mounted alongside the real composer.
+    function captureScene(body, native) {
+      const pane = body.closest('[data-phase="hero"]') || body;
+      const title = body.querySelector(
+        '[class$="_titleGroup"] > span:first-child',
+      );
+      const editor = body.querySelector("[data-composer-input]");
+      const layer = document.createElement("div");
+      layer.dataset.whaleSend = "";
+      layer.inert = true;
+      layer.setAttribute("aria-hidden", "true");
+      layer.style.cssText =
+        "position:fixed;inset:0;z-index:2147483646;pointer-events:none;overflow:hidden;isolation:isolate;";
+      const base =
+        getComputedStyle(body).getPropertyValue("--dsw-alias-bg-base").trim() ||
+        "Canvas";
+      const haze = document.createElement("div");
+      haze.style.cssText = "position:absolute;inset:0;opacity:0;";
+      haze.style.backgroundColor = base;
+      const back = place(
+        document.createElement("div"),
+        pane.getBoundingClientRect(),
+      );
+      back.style.backgroundColor = base;
+      const canvas = place(
+        document.createElement("canvas"),
+        native.getBoundingClientRect(),
+      );
+      canvas.style.filter = "grayscale(1)";
+      canvas.style.opacity = String(
+        Math.min(1, Number(getComputedStyle(native).opacity) * 2),
+      );
+      const chrome = document.createElement("div");
+      chrome.dataset.whaleChrome = "";
+      const text = document.createElement("div");
+      text.dataset.whaleText = "";
+      layer.append(haze, back, canvas, chrome, text);
+
+      function capture(node) {
+        if (node === native || !(node instanceof Element)) return;
+        const style = getComputedStyle(node);
+        // display:contents wrappers have no rectangle but can have visible children.
+        if (
+          style.display === "none" ||
+          style.visibility === "hidden" ||
+          style.opacity === "0"
+        )
+          return;
+        const rect = node.getBoundingClientRect();
+        const visible =
+          rect.width &&
+          rect.height &&
+          rect.bottom > 0 &&
+          rect.right > 0 &&
+          rect.top < innerHeight &&
+          rect.left < innerWidth;
+        if (visible && (node === title || node === editor)) {
+          const label = place(document.createElement("div"), rect);
+          visualStyle(
+            label,
+            style,
+            typography + " padding border-width border-style",
+          );
+          label.style.borderColor = "transparent";
+          label.style.color = style.color;
+          label.style.overflow = "hidden";
+          label.style.textShadow = "0 0 4px " + base + ", 0 0 10px " + base;
+          label.textContent = node.value ?? node.innerText;
+          text.append(label);
+          return;
+        }
+        if (visible && node instanceof SVGSVGElement) {
+          // RC4 uses local paths and sprite references for its toolbar icons.
+          const icon = document.createElementNS(node.namespaceURI, "svg");
+          icon.setAttribute(
+            "viewBox",
+            node.getAttribute("viewBox") || "0 0 16 16",
+          );
+          for (const shape of node.querySelectorAll("path,rect,circle,use")) {
+            const copy = document.createElementNS(
+              node.namespaceURI,
+              shape.localName,
+            );
+            for (const attr of [
+              "d",
+              "x",
+              "y",
+              "width",
+              "height",
+              "rx",
+              "ry",
+              "cx",
+              "cy",
+              "r",
+              "transform",
+              "fill-rule",
+              "stroke-linecap",
+              "stroke-linejoin",
+            ])
+              if (shape.hasAttribute(attr))
+                copy.setAttribute(attr, shape.getAttribute(attr));
+            const href =
+              shape.getAttribute("href") || shape.getAttribute("xlink:href");
+            if (href?.startsWith("#")) copy.setAttribute("href", href);
+            visualStyle(
+              copy,
+              getComputedStyle(shape),
+              "fill stroke stroke-width opacity",
+            );
+            icon.append(copy);
+          }
+          visualStyle(icon, style, "color opacity");
+          chrome.append(place(icon, rect));
+          return;
+        }
+        if (
+          visible &&
+          (style.backgroundColor !== "rgba(0, 0, 0, 0)" ||
+            style.boxShadow !== "none" ||
+            parseFloat(style.borderTopWidth) ||
+            parseFloat(style.borderBottomWidth))
+        ) {
+          const box = place(document.createElement("div"), rect);
+          visualStyle(
+            box,
+            style,
+            "background-color border-radius border-color border-width border-style box-shadow opacity",
+          );
+          chrome.append(box);
+        }
+        for (const child of node.childNodes) {
+          if (child.nodeType !== Node.TEXT_NODE) {
+            capture(child);
+            continue;
+          }
+          if (!child.textContent.trim()) continue;
+          const range = document.createRange();
+          range.selectNodeContents(child);
+          const rect = range.getBoundingClientRect();
+          if (!rect.width || !rect.height) continue;
+          const label = place(document.createElement("div"), rect);
+          visualStyle(label, style, typography + " color opacity");
+          label.style.lineHeight = rect.height + "px";
+          label.textContent = child.textContent;
+          chrome.append(label);
+        }
+      }
+      // The opaque pane background is already provided by back.
+      for (const child of pane.children) capture(child);
+      return { layer, canvas, chrome, haze };
+    }
+
     function attach(anchor) {
       const body = anchor.closest("[data-conversation-content]");
       if (!body) return;
@@ -121,7 +296,7 @@ window.__ModuleLoader__.load({
         intent = {
           session,
           color: style.color,
-          opacity: Math.min(1, Number(style.opacity) * 2),
+          scene: captureScene(body, native),
           atlas: prepare(),
         };
         // A rejected submission must not arm a later page change.
@@ -129,46 +304,29 @@ window.__ModuleLoader__.load({
       }
 
       async function start(attempt) {
-        // Do not put a blank cover over a working chat while loading an asset.
         clearTimeout(timer);
-        const pixels = await attempt.atlas;
-        if (attempt !== intent) return;
-        if (
-          !pixels ||
-          media.matches ||
-          document.hidden ||
-          !body.isConnected ||
-          body.dataset.contentPhase !== "active" ||
-          body.dataset.conversationSession !== attempt.session
-        )
-          return reset();
-        const layer = document.createElement("div"),
-          canvas = document.createElement("canvas");
+        const { layer, canvas, chrome, haze } = attempt.scene;
         const ctx = canvas.getContext("2d");
         if (!ctx) return reset();
-        layer.dataset.whaleSend = "";
-        layer.setAttribute("aria-hidden", "true");
-        layer.style.cssText =
-          "position:absolute;inset:0;z-index:2;pointer-events:none;overflow:hidden;background:var(--dsw-alias-bg-base)";
-        canvas.style.cssText =
-          "display:block;width:100%;height:100%;filter:grayscale(1)";
-        canvas.style.opacity = String(attempt.opacity);
-        layer.append(canvas);
-        body.append(layer);
-        active = { session: attempt.session, layer };
+        // Attach before the next paint, even while the atlas is decoding.
+        // RC4 owns the live session underneath and submits immediately.
+        document.body.append(layer);
+        const playback = { session: attempt.session, layer };
+        active = playback;
         intent = undefined;
+        let pixels;
+        attempt.atlas.then((data) => {
+          if (active !== playback) return;
+          if (!data || media.matches || document.hidden) return reset();
+          pixels = data;
+        });
         const began = performance.now();
         let lastFrame = -1;
         function tick(now) {
           const elapsed = now - began,
-            w = layer.clientWidth,
-            h = layer.clientHeight;
-          if (
-            elapsed >= duration + fadeDuration ||
-            !w ||
-            !h ||
-            !body.isConnected
-          )
+            w = canvas.clientWidth,
+            h = canvas.clientHeight;
+          if (elapsed >= duration || !w || !h || !body.isConnected)
             return reset();
           const dpr = Math.min(devicePixelRatio, 2);
           const px = Math.round(w * dpr),
@@ -182,13 +340,17 @@ window.__ModuleLoader__.load({
           }
           const progress = Math.min(1, elapsed / duration);
           const frame = Math.min(frames - 1, Math.floor(progress * frames));
-          if (frame !== lastFrame) {
+          if (pixels && frame !== lastFrame) {
             paint(ctx, pixels, frame, progress, w, h);
             lastFrame = frame;
           }
+          const opening = Math.min(1, elapsed / fadeDuration);
+          const mix = opening * opening * (3 - 2 * opening);
+          chrome.style.opacity = String(1 - mix);
+          haze.style.opacity = String(mix);
           const t = Math.min(
             1,
-            Math.max(0, (duration + fadeDuration - elapsed) / fadeDuration),
+            Math.max(0, (duration - elapsed) / fadeDuration),
           );
           layer.style.opacity = String(t * t * (3 - 2 * t));
           raf = requestAnimationFrame(tick);
@@ -236,6 +398,7 @@ window.__ModuleLoader__.load({
       };
       listen(document, "pointerdown", skip);
       listen(document, "keydown", skip);
+      listen(window, "resize", reset);
       listen(document, "visibilitychange", reset);
       listen(media, "change", reset);
       return () => {

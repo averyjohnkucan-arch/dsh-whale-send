@@ -10,10 +10,10 @@ const sheet =
   require.resolve("@deepseek-ai/dsh-client-ui-brand-official/assets/breach-atlas-43c5305a3d4d.webp");
 const html = `<!doctype html><style>body{--dsw-alias-bg-base:white}main{width:480px;height:320px;position:relative}canvas[data-home-whale]{opacity:.18}</style>
 <main data-conversation-content data-content-phase="hero" data-conversation-session="1"><span hidden></span>
-<canvas data-home-whale></canvas><div data-composer-card><textarea data-composer-input></textarea><button aria-busy="false" class="test_primary">Send</button></div></main>
+<div class="native_titleGroup"><span>Welcome heading</span></div><canvas data-home-whale style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></canvas><div data-composer-card><textarea data-composer-input></textarea><button aria-busy="false" class="test_primary">Send</button></div></main>
 <script>
 const body=document.querySelector('main'),button=document.querySelector('button');
-function send(){body.dataset.contentPhase='active';body.querySelector('[data-home-whale]')?.remove();}
+function send(){document.querySelector('textarea').value='';body.querySelector('.native_titleGroup')?.remove();body.dataset.contentPhase='active';body.querySelector('[data-home-whale]')?.remove();}
 button.onclick=send;
 document.querySelector('textarea').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey)send()};
 window.__ModuleLoader__={load(spec){
@@ -23,7 +23,7 @@ window.__ModuleLoader__={load(spec){
 }};
 </script><script src="/client.js"></script>`;
 
-test("first send paints the host artwork at 36% and reveals the live chat in 250 ms", async (t) => {
+test("first send preserves the original text, fades controls out, and reveals chat during the last half-second", async (t) => {
   const client = await readFile(new URL("../client.js", import.meta.url));
   const atlas = await readFile(sheet);
   const server = createServer((req, res) => {
@@ -52,14 +52,36 @@ test("first send paints the host artwork at 36% and reveals the live chat in 250
       const start = performance.now();
       function sample(now) {
         const elapsed = now - start;
-        samples.push([elapsed, Number(layer.style.opacity), layer.isConnected]);
+        samples.push([
+          elapsed,
+          Number(layer.style.opacity),
+          layer.isConnected,
+          Number(layer.querySelector("[data-whale-chrome]").style.opacity),
+        ]);
         if (layer.isConnected) requestAnimationFrame(sample);
       }
       requestAnimationFrame(sample);
     });
-    watch.observe(document.querySelector("main"), { childList: true });
+    watch.observe(document.body, { childList: true });
   });
+  await page.type("textarea", "My first message");
+  const before = await page.$eval("textarea", (e) => [
+    e.getBoundingClientRect().x,
+    e.getBoundingClientRect().y,
+  ]);
   await page.click("button");
+  await page.waitForSelector("[data-whale-text]");
+  const retained = await page.$eval("[data-whale-text]", (group) =>
+    [...group.children].map((e) => ({
+      text: e.textContent,
+      pos: [e.getBoundingClientRect().x, e.getBoundingClientRect().y],
+    })),
+  );
+  assert.deepEqual(
+    retained.map((e) => e.text),
+    ["Welcome heading", "My first message"],
+  );
+  assert.deepEqual(retained[1].pos, before);
   await page.waitForSelector("[data-whale-send] canvas");
   assert.equal(
     await page.$eval(
@@ -90,8 +112,19 @@ test("first send paints the host artwork at 36% and reveals the live chat in 250
     ([, opacity, connected]) => connected && opacity < 1 && opacity > 0,
   );
   assert.ok(fade.length > 1);
-  assert.ok(fade[0][0] > 5550 && fade[0][0] < 5850);
-  assert.ok(Math.abs(samples.at(-1)[0] - fade[0][0] - 250) < 90);
+  assert.ok(
+    samples.some(
+      ([ms, , , chrome]) => ms > 50 && ms < 450 && chrome > 0 && chrome < 1,
+    ),
+  );
+  assert.ok(
+    samples.some(
+      ([ms, opacity, , chrome]) =>
+        ms > 500 && ms < 5200 && opacity === 1 && chrome === 0,
+    ),
+  );
+  assert.ok(fade[0][0] > 5050 && fade[0][0] < 5350);
+  assert.ok(Math.abs(samples.at(-1)[0] - fade[0][0] - 500) < 90);
   await page.click("button");
   assert.equal(await page.$("[data-whale-send]"), null);
   await page.goto(url);
