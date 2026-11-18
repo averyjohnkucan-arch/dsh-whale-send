@@ -19,7 +19,9 @@ document.querySelector('textarea').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey
 window.__ModuleLoader__={load(spec){
  const react={useRef:()=>({current:document.querySelector('span')}),useLayoutEffect:fn=>{window.dispose=fn()},createElement:()=>null};
  const dependency=()=>react;dependency.asset=()=>'/atlas.webp';
- spec.factory(dependency).apply({slots:{inject:(key,fn)=>fn(),register:(opts,frame)=>frame({})}});
+ spec.factory(dependency).apply({slots:{inject:(key,fn)=>fn(),register:(opts,frame)=>{
+  if(opts.name==='conversation.hero.frame')frame({});
+ }}});
 }};
 </script><script src="/client.js"></script>`;
 
@@ -56,9 +58,10 @@ test("the whale moves during both fades and the submitted text floats to the scr
       let paint;
       ctx.clearRect = function (...args) {
         const elapsed = performance.now() - start;
-        paint = elapsed > 1000 && elapsed < 2000
-          ? { elapsed, pose: [], alphas: [] }
-          : undefined;
+        paint =
+          elapsed > 1000 && elapsed < 2000
+            ? { elapsed, pose: [], alphas: [] }
+            : undefined;
         if (paint) ditherPaints.push(paint);
         clearRect.apply(this, args);
       };
@@ -107,6 +110,7 @@ test("the whale moves during both fades and the submitted text floats to the scr
   await page.type("textarea", "My first message");
   await page.click("button");
   await page.waitForSelector("[data-whale-text]");
+  assert.equal(await page.$("[data-whale-water]"), null);
   assert.equal(
     await page.$eval("[data-whale-text]", (e) => e.textContent),
     "My first message",
@@ -169,7 +173,10 @@ test("the whale moves during both fades and the submitted text floats to the scr
   });
   const samples = await page.evaluate(() => window.samples);
   const paints = await page.evaluate(() => window.ditherPaints);
-  assert.ok(paints.length > 24, "The dots repaint faster than the pose advances");
+  assert.ok(
+    paints.length > 24,
+    "The dots repaint faster than the pose advances",
+  );
   assert.ok(
     paints.some((current, index) => {
       const previous = paints[index - 1];
@@ -235,4 +242,52 @@ test("the whale moves during both fades and the submitted text floats to the scr
   await page.waitForSelector("[data-whale-send]");
   await page.evaluate(() => window.dispose());
   assert.equal(await page.$("[data-whale-send]"), null);
+
+  await page.evaluate(() => {
+    localStorage.setItem(
+      "dsh-whale-send.preferences",
+      '{"dithering":false,"water":true}',
+    );
+  });
+  await page.reload();
+  await page.click("button");
+  await page.waitForFunction(() => {
+    const water = document.querySelector("[data-whale-water]");
+    return water && Number(water.style.opacity) > 0.8;
+  });
+  const result = await page.evaluate(async () => {
+    const water = document.querySelector("[data-whale-water]");
+    const start = {
+      opacity: Number(water.style.opacity),
+      ripple: water.style.getPropertyValue("--ripple-offset"),
+    };
+    const context = document
+      .querySelector("[data-whale-send] canvas")
+      .getContext("2d");
+    const clearRect = context.clearRect;
+    let paintCount = 0;
+    context.clearRect = function (...args) {
+      paintCount++;
+      clearRect.apply(this, args);
+    };
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    context.clearRect = clearRect;
+    return {
+      mask: getComputedStyle(water).maskImage,
+      spansPane:
+        water.offsetWidth === water.parentElement.offsetWidth &&
+        water.offsetHeight === water.parentElement.offsetHeight,
+      movedAndFaded:
+        water.style.getPropertyValue("--ripple-offset") !== start.ripple &&
+        Number(water.style.opacity) < start.opacity,
+      paintCount,
+    };
+  });
+  assert.match(result.mask, /radial-gradient/);
+  assert.ok(result.spansPane);
+  assert.ok(result.movedAndFaded);
+  assert.ok(
+    result.paintCount > 8 && result.paintCount < 24,
+    "Disabling dithering uses the atlas frame rate",
+  );
 });

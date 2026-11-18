@@ -8,6 +8,84 @@ window.__ModuleLoader__.load({
     const duration = 5700;
     const fadeDuration = 500;
     const ditherHz = 40;
+    const settingsKey = "dsh-whale-send.preferences";
+    let preferences = { dithering: true, water: false };
+    try {
+      const saved = JSON.parse(localStorage.getItem(settingsKey));
+      preferences = {
+        dithering: saved?.dithering !== false,
+        water: saved?.water === true,
+      };
+    } catch {
+      // Defaults still work when storage is unavailable.
+    }
+
+    function Settings() {
+      const [values, setValues] = React.useState(() => preferences);
+      const h = React.createElement;
+      function toggle(key, label, description) {
+        return h(
+          "label",
+          {
+            style: {
+              display: "grid",
+              gridTemplateColumns: "auto 1fr",
+              alignItems: "start",
+              gap: "12px",
+              cursor: "pointer",
+            },
+          },
+          h("input", {
+            type: "checkbox",
+            checked: values[key],
+            onChange(event) {
+              preferences = {
+                ...preferences,
+                [key]: event.currentTarget.checked,
+              };
+              setValues(preferences);
+              try {
+                localStorage.setItem(settingsKey, JSON.stringify(preferences));
+              } catch {
+                // The choice remains active for the current page.
+              }
+            },
+          }),
+          h(
+            "span",
+            null,
+            label,
+            h(
+              "small",
+              { style: { display: "block", marginTop: "4px", opacity: 0.7 } },
+              description,
+            ),
+          ),
+        );
+      }
+      return h(
+        "section",
+        {
+          "aria-label": "Whale Send settings",
+          style: {
+            display: "grid",
+            gap: "20px",
+            paddingBlock: "8px",
+            font: "inherit",
+          },
+        },
+        toggle(
+          "dithering",
+          "Dithering",
+          "Flicker the whale’s dots independently.",
+        ),
+        toggle(
+          "water",
+          "Water ripple background",
+          "Fill the conversation pane with grey dots that ripple and slowly fade.",
+        ),
+      );
+    }
     // The RC4 sheet has a long transparent tail. These frames span the
     // visible emergence and final splash, including both crossfades.
     const firstFrame = 12,
@@ -39,20 +117,27 @@ window.__ModuleLoader__.load({
       }
     }
 
-    // Draw RC4's dot-fill artwork in the original home canvas geometry.
-    function paint(ctx, pixels, frame, ditherStep, w, h) {
-      ctx.clearRect(0, 0, w, h);
+    function dotGrid(w, h) {
       const scene = Math.min(Math.max(w * 0.94, 720), h * 1.6, 1120) * 1.12;
       const cell = scene / width;
-      const left = (w - scene) / 2,
-        top = h * 0.43 - (height * cell) / 2;
+      return {
+        cell,
+        left: (w - scene) / 2,
+        top: h * 0.43 - (height * cell) / 2,
+      };
+    }
+
+    // Draw RC4's dot-fill artwork in the original home canvas geometry.
+    function paint(ctx, pixels, frame, ditherStep, w, h, { cell, left, top }) {
+      ctx.clearRect(0, 0, w, h);
       const stride = width * columns;
       const offset =
         (Math.floor(frame / columns) * height * stride +
           (frame % columns) * width) *
         4;
       const alpha = 0.65 * 0.8;
-      const phaseSeed = Math.imul(ditherStep + 1, 0x9e3779b1);
+      const phaseSeed =
+        ditherStep === null ? 0 : Math.imul(ditherStep + 1, 0x9e3779b1);
       for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
           const i = offset + (y * stride + x) * 4;
@@ -60,10 +145,13 @@ window.__ModuleLoader__.load({
           if (mask < 0.015) continue;
           // The mean of the two levels retains the atlas opacity. Hash each
           // dot separately so brightening and dimming happen side by side.
-          let hash = (y * width + x) ^ phaseSeed;
-          hash = Math.imul(hash ^ (hash >>> 16), 0x45d9f3b);
-          hash = Math.imul(hash ^ (hash >>> 16), 0x45d9f3b);
-          const brightness = ((hash ^ (hash >>> 16)) & 1) === 0 ? 0.2 : 1.8;
+          let brightness = 1;
+          if (ditherStep !== null) {
+            let hash = (y * width + x) ^ phaseSeed;
+            hash = Math.imul(hash ^ (hash >>> 16), 0x45d9f3b);
+            hash = Math.imul(hash ^ (hash >>> 16), 0x45d9f3b);
+            brightness = ((hash ^ (hash >>> 16)) & 1) === 0 ? 0.2 : 1.8;
+          }
           ctx.globalAlpha = mask * alpha * brightness;
           ctx.beginPath();
           ctx.arc(
@@ -77,6 +165,26 @@ window.__ModuleLoader__.load({
         }
       }
       ctx.globalAlpha = 1;
+    }
+
+    function makeWater(color) {
+      const water = document.createElement("div");
+      water.dataset.whaleWater = "";
+      water.style.cssText = `
+        position:absolute;
+        inset:0;
+        pointer-events:none;
+        mask-image:radial-gradient(circle at center, black 0.8px, transparent 1.35px);
+        background:repeating-radial-gradient(
+          ellipse at var(--ripple-x, 44%) 72%,
+          color-mix(in srgb, currentColor 32%, transparent) var(--ripple-offset, 0px),
+          color-mix(in srgb, currentColor 8%, transparent) calc(var(--ripple-offset, 0px) + 56px),
+          color-mix(in srgb, currentColor 32%, transparent) calc(var(--ripple-offset, 0px) + 112px)
+        );
+      `;
+      water.style.color = color;
+      water.style.filter = "grayscale(1)";
+      return water;
     }
 
     const visualStyle = (node, source, properties) => {
@@ -330,6 +438,7 @@ window.__ModuleLoader__.load({
           color: style.color,
           scene: captureScene(body, native),
           atlas: prepare(),
+          preferences,
         };
         // A click on the enabled Send control is unambiguous. Enter can mean
         // a newline in some configurations, so let the host confirm that case.
@@ -346,6 +455,10 @@ window.__ModuleLoader__.load({
         const { pane, layer, canvas, chrome, text } = attempt.scene;
         const ctx = canvas.getContext("2d");
         if (!ctx) return reset();
+        const water = attempt.preferences.water
+          ? makeWater(attempt.color)
+          : null;
+        if (water) layer.prepend(water);
         // Attach before the next paint, even while the atlas is decoding.
         // RC4 owns the live session underneath and submits immediately.
         pane.append(layer);
@@ -359,6 +472,7 @@ window.__ModuleLoader__.load({
         const began = performance.now();
         let lastFrame = -1;
         let lastDitherStep = -1;
+        let grid;
         function tick(now) {
           const elapsed = now - began,
             w = canvas.clientWidth,
@@ -373,6 +487,11 @@ window.__ModuleLoader__.load({
             canvas.height = py;
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
             ctx.fillStyle = attempt.color;
+            grid = dotGrid(w, h);
+            if (water) {
+              water.style.maskSize = `${grid.cell}px ${grid.cell}px`;
+              water.style.maskPosition = `${canvas.offsetLeft + grid.left}px ${canvas.offsetTop + grid.top}px`;
+            }
             lastFrame = -1;
           }
           const progress = Math.min(1, elapsed / duration);
@@ -382,9 +501,11 @@ window.__ModuleLoader__.load({
               lastVisibleFrame - firstFrame,
               Math.floor(progress * (lastVisibleFrame - firstFrame + 1)),
             );
-          const ditherStep = Math.floor((elapsed * ditherHz) / 1000);
+          const ditherStep = attempt.preferences.dithering
+            ? Math.floor((elapsed * ditherHz) / 1000)
+            : null;
           if (frame !== lastFrame || ditherStep !== lastDitherStep) {
-            paint(ctx, pixels, frame, ditherStep, w, h);
+            paint(ctx, pixels, frame, ditherStep, w, h, grid);
             lastFrame = frame;
             lastDitherStep = ditherStep;
           }
@@ -392,6 +513,14 @@ window.__ModuleLoader__.load({
           const mix = opening * opening * (3 - 2 * opening);
           text.style.transform = `translate(${travel.x * mix}px, ${travel.y * mix}px)`;
           chrome.style.opacity = String(1 - mix);
+          if (water) {
+            water.style.setProperty(
+              "--ripple-x",
+              `${44 + 11 * Math.sin(progress * Math.PI)}%`,
+            );
+            water.style.setProperty("--ripple-offset", `${elapsed * 0.032}px`);
+            water.style.opacity = String(mix * (0.92 - 0.56 * progress));
+          }
           const t = Math.min(
             1,
             Math.max(0, (duration - elapsed) / fadeDuration),
@@ -469,6 +598,17 @@ window.__ModuleLoader__.load({
     return {
       inject: ["slots"],
       apply(ctx) {
+        ctx.slots.inject("settings.section", () =>
+          ctx.slots.register(
+            {
+              name: "settings.section",
+              id: "whale-send",
+              order: 69,
+              label: () => "Whale Send",
+            },
+            Settings,
+          ),
+        );
         ctx.slots.inject("conversation.hero.frame", () =>
           ctx.slots.register(
             { name: "conversation.hero.frame", id: "whale-send" },

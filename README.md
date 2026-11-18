@@ -4,4 +4,4 @@ In **Plugins → Add plugin**, paste `https://github.com/averyjohnkucan-arch/dsh
 
 Requires DeepSeek Harness 0.2.2-rc.4 and its official brand plugin. The effect respects the browser’s reduced-motion preference and uses the whale artwork shipped with the host. Subsequent messages use the standard chat UI.
 
-The whale’s dots flicker independently. Their brightness pattern updates 40 times per second when the browser can keep up, while the original frames guide the whale’s motion.
+Open **Settings → Whale Send** to switch **Dithering** or **Water ripple background** on or off. With dithering on, the whale’s dots flicker independently at up to 40 updates per second while the original frames guide its motion. The optional background covers the conversation pane with grey dots that rise and fall in slow ripples as the whale passes. Dithering starts on and the background starts off. Choices are saved in the current browser.
