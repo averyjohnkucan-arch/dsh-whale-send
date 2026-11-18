@@ -14,7 +14,7 @@ const html = `<!doctype html><style>body{--dsw-alias-bg-base:white}main{width:48
 <script>
 const body=document.querySelector('main'),button=document.querySelector('button');
 function send(){document.querySelector('textarea').value='';body.querySelector('.native_titleGroup')?.remove();body.dataset.contentPhase='active';body.querySelector('[data-home-whale]')?.remove();}
-button.onclick=send;
+button.onclick=()=>setTimeout(send,750);
 document.querySelector('textarea').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey)send()};
 window.__ModuleLoader__={load(spec){
  const react={useRef:()=>({current:document.querySelector('span')}),useLayoutEffect:fn=>{window.dispose=fn()},createElement:()=>null};
@@ -23,7 +23,7 @@ window.__ModuleLoader__={load(spec){
 }};
 </script><script src="/client.js"></script>`;
 
-test("first send preserves the original text, fades controls out, and reveals chat during the last half-second", async (t) => {
+test("the whale moves during both fades and the submitted text floats to the screen center", async (t) => {
   const client = await readFile(new URL("../client.js", import.meta.url));
   const atlas = await readFile(sheet);
   const server = createServer((req, res) => {
@@ -57,6 +57,20 @@ test("first send preserves the original text, fades controls out, and reveals ch
           Number(layer.style.opacity),
           layer.isConnected,
           Number(layer.querySelector("[data-whale-chrome]").style.opacity),
+          new DOMMatrix(
+            getComputedStyle(layer.querySelector("[data-whale-text]"))
+              .transform,
+          ).m41,
+          document.querySelector("main").dataset.contentPhase,
+          (() => {
+            if (!(elapsed < 500 || (elapsed > 5200 && elapsed < 5600)))
+              return false;
+            const c = layer.querySelector("canvas");
+            return c
+              .getContext("2d")
+              .getImageData(0, 0, c.width, c.height)
+              .data.some((v, i) => i % 4 === 3 && v > 0);
+          })(),
         ]);
         if (layer.isConnected) requestAnimationFrame(sample);
       }
@@ -65,23 +79,17 @@ test("first send preserves the original text, fades controls out, and reveals ch
     watch.observe(document.body, { childList: true });
   });
   await page.type("textarea", "My first message");
-  const before = await page.$eval("textarea", (e) => [
-    e.getBoundingClientRect().x,
-    e.getBoundingClientRect().y,
-  ]);
   await page.click("button");
   await page.waitForSelector("[data-whale-text]");
-  const retained = await page.$eval("[data-whale-text]", (group) =>
-    [...group.children].map((e) => ({
-      text: e.textContent,
-      pos: [e.getBoundingClientRect().x, e.getBoundingClientRect().y],
-    })),
+  assert.equal(
+    await page.$eval("[data-whale-text]", (e) => e.textContent),
+    "My first message",
   );
-  assert.deepEqual(
-    retained.map((e) => e.text),
-    ["Welcome heading", "My first message"],
+  assert.ok(
+    await page.$eval("[data-whale-chrome]", (e) =>
+      e.textContent.includes("Welcome heading"),
+    ),
   );
-  assert.deepEqual(retained[1].pos, before);
   await page.waitForSelector("[data-whale-send] canvas");
   assert.equal(
     await page.$eval(
@@ -89,10 +97,6 @@ test("first send preserves the original text, fades controls out, and reveals ch
       (c) => getComputedStyle(c).opacity,
     ),
     "0.36",
-  );
-  assert.equal(
-    await page.$eval("main", (e) => e.dataset.contentPhase),
-    "active",
   );
   await page.waitForFunction(() => {
     const c = document.querySelector("[data-whale-send] canvas");
@@ -104,6 +108,24 @@ test("first send preserves the original text, fades controls out, and reveals ch
         .data.some((v, i) => i % 4 === 3 && v > 0)
     );
   });
+  await page.waitForFunction(
+    () =>
+      Number(document.querySelector("[data-whale-chrome]")?.style.opacity) ===
+      0,
+  );
+  const offset = await page.$eval("[data-whale-text] > div", (e) => {
+    const r = document.createRange();
+    r.selectNodeContents(e);
+    const bounds = r.getBoundingClientRect();
+    return [
+      bounds.x + bounds.width / 2 - innerWidth / 2,
+      bounds.y + bounds.height / 2 - innerHeight / 2,
+    ];
+  });
+  assert.ok(
+    offset.every((n) => Math.abs(n) < 1),
+    JSON.stringify(offset),
+  );
   await page.waitForFunction(() => samples.some((s) => !s[2]), {
     timeout: 10000,
   });
@@ -112,6 +134,21 @@ test("first send preserves the original text, fades controls out, and reveals ch
     ([, opacity, connected]) => connected && opacity < 1 && opacity > 0,
   );
   assert.ok(fade.length > 1);
+  assert.ok(
+    samples.some(
+      ([ms, , , chrome, dx, phase, ink]) =>
+        ms < 500 &&
+        chrome > 0 &&
+        chrome < 1 &&
+        dx > 0 &&
+        phase === "hero" &&
+        ink,
+    ),
+  );
+  assert.ok(
+    fade.some((s) => s[6]),
+    "The closing fade overlaps painted whale frames",
+  );
   assert.ok(
     samples.some(
       ([ms, , , chrome]) => ms > 50 && ms < 450 && chrome > 0 && chrome < 1,

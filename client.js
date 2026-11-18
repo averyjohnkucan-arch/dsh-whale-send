@@ -7,6 +7,10 @@ window.__ModuleLoader__.load({
     );
     const duration = 5700;
     const fadeDuration = 500;
+    // The RC4 sheet has a long transparent tail. These frames span the
+    // visible emergence and final splash, including both crossfades.
+    const firstFrame = 12,
+      lastVisibleFrame = 106;
     const width = 192,
       height = 108,
       columns = 12,
@@ -34,8 +38,8 @@ window.__ModuleLoader__.load({
       }
     }
 
-    // RC4's first (dot-fill) breach, with the same geometry, cadence and water fade.
-    function paint(ctx, pixels, frame, progress, w, h) {
+    // Draw RC4's dot-fill artwork in the original home canvas geometry.
+    function paint(ctx, pixels, frame, w, h) {
       ctx.clearRect(0, 0, w, h);
       const scene = Math.min(Math.max(w * 0.94, 720), h * 1.6, 1120) * 1.12;
       const cell = scene / width;
@@ -46,8 +50,7 @@ window.__ModuleLoader__.load({
         (Math.floor(frame / columns) * height * stride +
           (frame % columns) * width) *
         4;
-      const alpha =
-        0.65 * 0.8 * Math.min(1, progress * 15, (1 - progress) * 10);
+      const alpha = 0.65 * 0.8;
       for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
           const i = offset + (y * stride + x) * 4;
@@ -94,9 +97,6 @@ window.__ModuleLoader__.load({
     // embeds, or editable fields are mounted alongside the real composer.
     function captureScene(body, native) {
       const pane = body.closest('[data-phase="hero"]') || body;
-      const title = body.querySelector(
-        '[class$="_titleGroup"] > span:first-child',
-      );
       const editor = body.querySelector("[data-composer-input]");
       const layer = document.createElement("div");
       layer.dataset.whaleSend = "";
@@ -147,7 +147,7 @@ window.__ModuleLoader__.load({
           rect.right > 0 &&
           rect.top < innerHeight &&
           rect.left < innerWidth;
-        if (visible && (node === title || node === editor)) {
+        if (visible && node === editor) {
           const label = place(document.createElement("div"), rect);
           visualStyle(
             label,
@@ -240,7 +240,25 @@ window.__ModuleLoader__.load({
       }
       // The opaque pane background is already provided by back.
       for (const child of pane.children) capture(child);
-      return { layer, canvas, chrome, haze };
+      return { layer, canvas, chrome, haze, text };
+    }
+
+    // Measure the visible glyphs, since a short message may occupy only a
+    // few pixels of the full-width editor. Keep its wrapping while it moves.
+    function travelToCenter(group, layer) {
+      const label = group.firstElementChild;
+      if (!label?.textContent) return { x: 0, y: 0 };
+      const range = document.createRange();
+      range.selectNodeContents(label);
+      const glyphs = range.getBoundingClientRect();
+      const box = label.getBoundingClientRect();
+      const x =
+        (Math.max(glyphs.left, box.left) + Math.min(glyphs.right, box.right)) /
+        2;
+      const y =
+        (Math.max(glyphs.top, box.top) + Math.min(glyphs.bottom, box.bottom)) /
+        2;
+      return { x: layer.clientWidth / 2 - x, y: layer.clientHeight / 2 - y };
     }
 
     function attach(anchor) {
@@ -299,13 +317,19 @@ window.__ModuleLoader__.load({
           scene: captureScene(body, native),
           atlas: prepare(),
         };
+        // A click on the enabled Send control is unambiguous. Enter can mean
+        // a newline in some configurations, so let the host confirm that case.
+        if (send) {
+          start(intent).catch(reset);
+          return;
+        }
         // A rejected submission must not arm a later page change.
         timer = setTimeout(reset, 5000);
       }
 
       async function start(attempt) {
         clearTimeout(timer);
-        const { layer, canvas, chrome, haze } = attempt.scene;
+        const { layer, canvas, chrome, haze, text } = attempt.scene;
         const ctx = canvas.getContext("2d");
         if (!ctx) return reset();
         // Attach before the next paint, even while the atlas is decoding.
@@ -314,12 +338,10 @@ window.__ModuleLoader__.load({
         const playback = { session: attempt.session, layer };
         active = playback;
         intent = undefined;
-        let pixels;
-        attempt.atlas.then((data) => {
-          if (active !== playback) return;
-          if (!data || media.matches || document.hidden) return reset();
-          pixels = data;
-        });
+        const travel = travelToCenter(text, layer);
+        const pixels = await attempt.atlas;
+        if (active !== playback) return;
+        if (!pixels || media.matches || document.hidden) return reset();
         const began = performance.now();
         let lastFrame = -1;
         function tick(now) {
@@ -339,13 +361,19 @@ window.__ModuleLoader__.load({
             lastFrame = -1;
           }
           const progress = Math.min(1, elapsed / duration);
-          const frame = Math.min(frames - 1, Math.floor(progress * frames));
-          if (pixels && frame !== lastFrame) {
-            paint(ctx, pixels, frame, progress, w, h);
+          const frame =
+            firstFrame +
+            Math.min(
+              lastVisibleFrame - firstFrame,
+              Math.floor(progress * (lastVisibleFrame - firstFrame + 1)),
+            );
+          if (frame !== lastFrame) {
+            paint(ctx, pixels, frame, w, h);
             lastFrame = frame;
           }
           const opening = Math.min(1, elapsed / fadeDuration);
           const mix = opening * opening * (3 - 2 * opening);
+          text.style.transform = `translate(${travel.x * mix}px, ${travel.y * mix}px)`;
           chrome.style.opacity = String(1 - mix);
           haze.style.opacity = String(mix);
           const t = Math.min(
@@ -365,6 +393,7 @@ window.__ModuleLoader__.load({
           (active.session !== session || body.dataset.contentPhase !== "active")
         )
           reset();
+        if (eligible()) prepare();
         if (!intent) return;
         if (
           intent.session !== session ||
@@ -401,6 +430,7 @@ window.__ModuleLoader__.load({
       listen(window, "resize", reset);
       listen(document, "visibilitychange", reset);
       listen(media, "change", reset);
+      if (eligible()) prepare();
       return () => {
         events.abort();
         observer.disconnect();
