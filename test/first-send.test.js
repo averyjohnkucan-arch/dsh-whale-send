@@ -8,8 +8,8 @@ import puppeteer from "puppeteer";
 const require = createRequire(import.meta.url);
 const sheet =
   require.resolve("@deepseek-ai/dsh-client-ui-brand-official/assets/breach-atlas-43c5305a3d4d.webp");
-const html = `<!doctype html><style>body{--dsw-alias-bg-base:white}main{width:480px;height:320px;position:relative}canvas[data-home-whale]{opacity:.18}</style>
-<main data-conversation-content data-content-phase="hero" data-conversation-session="1"><span hidden></span>
+const html = `<!doctype html><style>body{margin:0;display:flex;--dsw-alias-bg-base:white}aside{width:160px;background:#445566;height:100vh}main{flex:1;height:100vh;position:relative}canvas[data-home-whale]{opacity:.18}</style>
+<aside><a href="#sidebar" onclick="event.preventDefault();this.dataset.clicked=1">Sidebar action</a></aside><main data-conversation-content data-content-phase="hero" data-conversation-session="1"><span hidden></span>
 <div class="native_titleGroup"><span>Welcome heading</span></div><canvas data-home-whale style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></canvas><div data-composer-card><textarea data-composer-input></textarea><button aria-busy="false" class="test_primary">Send</button></div></main>
 <script>
 const body=document.querySelector('main'),button=document.querySelector('button');
@@ -76,8 +76,14 @@ test("the whale moves during both fades and the submitted text floats to the scr
       }
       requestAnimationFrame(sample);
     });
-    watch.observe(document.body, { childList: true });
+    watch.observe(document.querySelector("main"), { childList: true });
   });
+  const sidebarPixels = () =>
+    page.screenshot({
+      clip: { x: 0, y: 0, width: 140, height: 120 },
+      captureBeyondViewport: false,
+    });
+  const sidebarBefore = await sidebarPixels();
   await page.type("textarea", "My first message");
   await page.click("button");
   await page.waitForSelector("[data-whale-text]");
@@ -113,6 +119,18 @@ test("the whale moves during both fades and the submitted text floats to the scr
       Number(document.querySelector("[data-whale-chrome]")?.style.opacity) ===
       0,
   );
+  assert.deepEqual(await sidebarPixels(), sidebarBefore);
+  assert.ok(
+    await page.$eval(
+      "[data-whale-send]",
+      (el) =>
+        el.getBoundingClientRect().left >=
+        document.querySelector("aside").getBoundingClientRect().right,
+    ),
+  );
+  await page.click("aside a");
+  assert.equal(await page.$eval("aside a", (a) => a.dataset.clicked), "1");
+  assert.ok(await page.$("[data-whale-send]"));
   const offset = await page.$eval("[data-whale-text] > div", (e) => {
     const r = document.createRange();
     r.selectNodeContents(e);

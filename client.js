@@ -76,20 +76,6 @@ window.__ModuleLoader__.load({
         node.style.setProperty(property, source.getPropertyValue(property));
     };
 
-    function place(node, rect) {
-      Object.assign(node.style, {
-        position: "absolute",
-        left: rect.left + "px",
-        top: rect.top + "px",
-        width: rect.width + "px",
-        height: rect.height + "px",
-        boxSizing: "border-box",
-        margin: "0",
-        pointerEvents: "none",
-      });
-      return node;
-    }
-
     const typography =
       "font-family font-size font-weight font-style font-variant line-height letter-spacing word-spacing text-align text-transform white-space direction overflow-wrap tab-size";
 
@@ -97,24 +83,32 @@ window.__ModuleLoader__.load({
     // embeds, or editable fields are mounted alongside the real composer.
     function captureScene(body, native) {
       const pane = body.closest('[data-phase="hero"]') || body;
+      const origin = pane.getBoundingClientRect();
+      function place(node, rect) {
+        Object.assign(node.style, {
+          position: "absolute",
+          left: rect.left - origin.left - pane.clientLeft + "px",
+          top: rect.top - origin.top - pane.clientTop + "px",
+          width: rect.width + "px",
+          height: rect.height + "px",
+          boxSizing: "border-box",
+          margin: "0",
+          pointerEvents: "none",
+        });
+        return node;
+      }
+
       const editor = body.querySelector("[data-composer-input]");
       const layer = document.createElement("div");
       layer.dataset.whaleSend = "";
       layer.inert = true;
       layer.setAttribute("aria-hidden", "true");
       layer.style.cssText =
-        "position:fixed;inset:0;z-index:2147483646;pointer-events:none;overflow:hidden;isolation:isolate;";
+        "position:absolute;inset:0;z-index:2147483646;pointer-events:none;overflow:hidden;isolation:isolate;";
       const base =
         getComputedStyle(body).getPropertyValue("--dsw-alias-bg-base").trim() ||
         "Canvas";
-      const haze = document.createElement("div");
-      haze.style.cssText = "position:absolute;inset:0;opacity:0;";
-      haze.style.backgroundColor = base;
-      const back = place(
-        document.createElement("div"),
-        pane.getBoundingClientRect(),
-      );
-      back.style.backgroundColor = base;
+      layer.style.backgroundColor = base;
       const canvas = place(
         document.createElement("canvas"),
         native.getBoundingClientRect(),
@@ -127,7 +121,7 @@ window.__ModuleLoader__.load({
       chrome.dataset.whaleChrome = "";
       const text = document.createElement("div");
       text.dataset.whaleText = "";
-      layer.append(haze, back, canvas, chrome, text);
+      layer.append(canvas, chrome, text);
 
       function capture(node) {
         if (node === native || !(node instanceof Element)) return;
@@ -238,9 +232,9 @@ window.__ModuleLoader__.load({
           chrome.append(label);
         }
       }
-      // The opaque pane background is already provided by back.
+      // The layer supplies the pane background. Other app panels stay live.
       for (const child of pane.children) capture(child);
-      return { layer, canvas, chrome, haze, text };
+      return { pane, layer, canvas, chrome, text };
     }
 
     // Measure the visible glyphs, since a short message may occupy only a
@@ -258,7 +252,19 @@ window.__ModuleLoader__.load({
       const y =
         (Math.max(glyphs.top, box.top) + Math.min(glyphs.bottom, box.bottom)) /
         2;
-      return { x: layer.clientWidth / 2 - x, y: layer.clientHeight / 2 - y };
+      const pane = layer.getBoundingClientRect();
+      // Keep the existing screen-center destination wherever the text fits.
+      // In narrow split layouts the center of the conversation is visible.
+      const halfWidth =
+        (Math.min(glyphs.right, box.right) - Math.max(glyphs.left, box.left)) /
+        2;
+      const targetX = innerWidth / 2;
+      const fits =
+        targetX - halfWidth >= pane.left && targetX + halfWidth <= pane.right;
+      return {
+        x: (fits ? targetX : pane.left + pane.width / 2) - x,
+        y: pane.top + pane.height / 2 - y,
+      };
     }
 
     function attach(anchor) {
@@ -329,12 +335,12 @@ window.__ModuleLoader__.load({
 
       async function start(attempt) {
         clearTimeout(timer);
-        const { layer, canvas, chrome, haze, text } = attempt.scene;
+        const { pane, layer, canvas, chrome, text } = attempt.scene;
         const ctx = canvas.getContext("2d");
         if (!ctx) return reset();
         // Attach before the next paint, even while the atlas is decoding.
         // RC4 owns the live session underneath and submits immediately.
-        document.body.append(layer);
+        pane.append(layer);
         const playback = { session: attempt.session, layer };
         active = playback;
         intent = undefined;
@@ -375,7 +381,6 @@ window.__ModuleLoader__.load({
           const mix = opening * opening * (3 - 2 * opening);
           text.style.transform = `translate(${travel.x * mix}px, ${travel.y * mix}px)`;
           chrome.style.opacity = String(1 - mix);
-          haze.style.opacity = String(mix);
           const t = Math.min(
             1,
             Math.max(0, (duration - elapsed) / fadeDuration),
@@ -425,8 +430,9 @@ window.__ModuleLoader__.load({
       const skip = () => {
         if (active || intent?.started) reset();
       };
-      listen(document, "pointerdown", skip);
-      listen(document, "keydown", skip);
+      const conversation = body.closest("[data-phase]") || body;
+      listen(conversation, "pointerdown", skip);
+      listen(conversation, "keydown", skip);
       listen(window, "resize", reset);
       listen(document, "visibilitychange", reset);
       listen(media, "change", reset);
