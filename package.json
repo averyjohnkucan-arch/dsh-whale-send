@@ -1,6 +1,6 @@
 {
   "name": "dsh-whale-send",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Play the original DeepSeek whale on the first send and fade into chat.",
   "type": "module",
   "license": "MIT",
@@ -44,6 +44,8 @@
   },
   "devDependencies": {
     "@deepseek-ai/dsh-client-ui-brand-official": "0.2.2-rc.4",
-    "puppeteer": "24.43.1"
+    "puppeteer": "24.43.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
   }
 }

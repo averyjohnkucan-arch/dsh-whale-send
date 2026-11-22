@@ -9,10 +9,11 @@ window.__ModuleLoader__.load({
     const fadeDuration = 500;
     const ditherHz = 40;
     const settingsKey = "dsh-whale-send.preferences";
-    let preferences = { dithering: true, water: true };
+    let preferences = { style: "led", dithering: true, water: true };
     try {
       const saved = JSON.parse(localStorage.getItem(settingsKey));
       preferences = {
+        style: ["code", "random"].includes(saved?.style) ? saved.style : "led",
         dithering: saved?.dithering !== false,
         water: saved?.water !== false,
       };
@@ -23,7 +24,16 @@ window.__ModuleLoader__.load({
     function Settings() {
       const [values, setValues] = React.useState(() => preferences);
       const h = React.createElement;
-      function toggle(key, label, description) {
+      function save(key, value) {
+        preferences = { ...preferences, [key]: value };
+        setValues(preferences);
+        try {
+          localStorage.setItem(settingsKey, JSON.stringify(preferences));
+        } catch {
+          // The choice remains active for the current page.
+        }
+      }
+      function toggle(key, label, description, disabled = false) {
         return h(
           "label",
           {
@@ -32,23 +42,15 @@ window.__ModuleLoader__.load({
               gridTemplateColumns: "auto 1fr",
               alignItems: "start",
               gap: "12px",
-              cursor: "pointer",
+              cursor: disabled ? "default" : "pointer",
             },
           },
           h("input", {
             type: "checkbox",
             checked: values[key],
+            disabled,
             onChange(event) {
-              preferences = {
-                ...preferences,
-                [key]: event.currentTarget.checked,
-              };
-              setValues(preferences);
-              try {
-                localStorage.setItem(settingsKey, JSON.stringify(preferences));
-              } catch {
-                // The choice remains active for the current page.
-              }
+              save(key, event.currentTarget.checked);
             },
           }),
           h(
@@ -74,10 +76,32 @@ window.__ModuleLoader__.load({
             font: "inherit",
           },
         },
+        h(
+          "label",
+          { style: { display: "grid", gap: "6px", justifyItems: "start" } },
+          "Whale style",
+          h(
+            "select",
+            {
+              value: values.style,
+              style: {
+                font: "inherit",
+                minHeight: "32px",
+                paddingInline: "8px",
+                borderRadius: "6px",
+              },
+              onChange: (event) => save("style", event.currentTarget.value),
+            },
+            h("option", { value: "led" }, "LED matrix"),
+            h("option", { value: "code" }, "Text/code"),
+            h("option", { value: "random" }, "Random per chat"),
+          ),
+        ),
         toggle(
           "dithering",
           "Dithering",
-          "Flicker the whale’s dots independently.",
+          "Flicker individual dots in the LED matrix.",
+          values.style === "code",
         ),
         toggle(
           "water",
@@ -94,6 +118,13 @@ window.__ModuleLoader__.load({
       height = 108,
       columns = 12,
       frames = 137;
+    const stride = width * columns;
+
+    function frameOffset(frame) {
+      const row = Math.floor(frame / columns);
+      const column = frame % columns;
+      return (row * height * stride + column * width) * 4;
+    }
 
     // Decode the host's own breach atlas. Red is dot size, green is opacity.
     async function readAtlas() {
@@ -117,7 +148,7 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function dotGrid(w, h) {
+    function whaleGrid(w, h) {
       const scene = Math.min(Math.max(w * 0.94, 720), h * 1.6, 1120) * 1.12;
       const cell = scene / width;
       return {
@@ -128,13 +159,8 @@ window.__ModuleLoader__.load({
     }
 
     // Draw RC4's dot-fill artwork in the original home canvas geometry.
-    function paint(ctx, pixels, frame, ditherStep, w, h, { cell, left, top }) {
-      ctx.clearRect(0, 0, w, h);
-      const stride = width * columns;
-      const offset =
-        (Math.floor(frame / columns) * height * stride +
-          (frame % columns) * width) *
-        4;
+    function paintDots(ctx, pixels, frame, ditherStep, { cell, left, top }) {
+      const offset = frameOffset(frame);
       const alpha = 0.65 * 0.8;
       const phaseSeed =
         ditherStep === null ? 0 : Math.imul(ditherStep + 1, 0x9e3779b1);
@@ -165,6 +191,91 @@ window.__ModuleLoader__.load({
         }
       }
       ctx.globalAlpha = 1;
+    }
+
+    // Lettering and mask adapted from RC4's home-whale/artwork.ts and
+    // code-fill.ts (MIT, see THIRD_PARTY_LICENSES.md).
+    const codePhrases = [
+      "// Everything is a plugin",
+      "ctx.plugin(Agent)",
+      "await agent.run()",
+      'ctx.on("turn/end", next)',
+      "const tools = ctx.tools",
+      "await session.append(event)",
+      "return next()",
+      "ctx.effect(() => dispose)",
+      "const { skills } = ctx",
+      "yield tool.result",
+      "type Context = Harness",
+      "MCP.connect()",
+      "useSession()",
+      "const workspace = cwd",
+      "await runtime.start()",
+      "// Creator Mode",
+    ];
+
+    function makeCodeFill(color, fontFamily) {
+      const lettering = document.createElement("canvas");
+      const mask = document.createElement("canvas");
+      mask.width = width;
+      mask.height = height;
+      const ink = lettering.getContext("2d");
+      const matte = mask.getContext("2d");
+      if (!ink || !matte) return null;
+      const alpha = matte.createImageData(width, height);
+
+      // The letters stay in place as the silhouette moves across them.
+      function resize(cell, dpr) {
+        const w = width * cell;
+        const h = height * cell;
+        lettering.width = Math.ceil(w * dpr);
+        lettering.height = Math.ceil(h * dpr);
+        ink.setTransform(dpr, 0, 0, dpr, 0, 0);
+        const fontSize = 7;
+        ink.fillStyle = color;
+        ink.font = `500 ${fontSize}px ${fontFamily}`;
+        ink.textBaseline = "middle";
+        let seed = 0x9e3779b9;
+        function sample() {
+          seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+          return seed / 0x100000000;
+        }
+        for (let y = fontSize; y < h; y += fontSize * 1.2) {
+          for (let x = -sample() * fontSize * 10; x < w; ) {
+            const phrase =
+              codePhrases[Math.floor(sample() * codePhrases.length)];
+            ink.globalAlpha = 0.65 + sample() * 0.35;
+            ink.fillText(phrase, x, y);
+            x +=
+              ink.measureText(phrase).width +
+              fontSize * (0.35 + sample() * 0.65);
+          }
+        }
+      }
+
+      function paint(ctx, pixels, frame, { cell, left, top }) {
+        const offset = frameOffset(frame);
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            alpha.data[(y * width + x) * 4 + 3] =
+              pixels[offset + (y * stride + x) * 4 + 1];
+          }
+        }
+        matte.putImageData(alpha, 0, 0);
+        const w = width * cell;
+        const h = height * cell;
+        ctx.globalAlpha = 0.65 * 1.5; // RC4's code ink level inside the whale.
+        ctx.drawImage(lettering, left, top, w, h);
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = "destination-in";
+        ctx.drawImage(mask, left, top, w, h);
+        ctx.globalCompositeOperation = "source-over";
+      }
+
+      function dispose() {
+        lettering.width = lettering.height = mask.width = mask.height = 0;
+      }
+      return { resize, paint, dispose };
     }
 
     function makeWater(color) {
@@ -272,7 +383,7 @@ window.__ModuleLoader__.load({
 
     // Capture only painted shapes and text. No duplicate controls, IDs, handlers,
     // embeds, or editable fields are mounted alongside the real composer.
-    function captureScene(body, native) {
+    function captureScene(body, native, nativeStyle) {
       const pane = body.closest('[data-phase="hero"]') || body;
       const origin = pane.getBoundingClientRect();
       function place(node, rect) {
@@ -305,9 +416,9 @@ window.__ModuleLoader__.load({
         native.getBoundingClientRect(),
       );
       canvas.style.filter = "grayscale(1)";
-      canvas.style.opacity = String(
-        Math.min(1, Number(getComputedStyle(native).opacity) * 2),
-      );
+      const stockOpacity = Number(nativeStyle.opacity);
+      const previousOpacity = Math.min(1, stockOpacity * 2);
+      canvas.style.opacity = String((stockOpacity + previousOpacity) / 2);
       const chrome = document.createElement("div");
       chrome.dataset.whaleChrome = "";
       const text = document.createElement("div");
@@ -467,7 +578,10 @@ window.__ModuleLoader__.load({
       function reset() {
         clearTimeout(timer);
         cancelAnimationFrame(raf);
-        if (active) active.layer.remove();
+        if (active) {
+          active.layer.remove();
+          active.code?.dispose();
+        }
         active = intent = undefined;
       }
       function eligible() {
@@ -511,7 +625,11 @@ window.__ModuleLoader__.load({
         intent = {
           session,
           color: style.color,
-          scene: captureScene(body, native),
+          codeInk:
+            style.getPropertyValue("--home-whale-code-ink").trim() ||
+            style.color,
+          fontFamily: style.fontFamily,
+          scene: captureScene(body, native, style),
           atlas: prepare(),
           preferences,
         };
@@ -544,6 +662,14 @@ window.__ModuleLoader__.load({
         const pixels = await attempt.atlas;
         if (active !== playback) return;
         if (!pixels || media.matches || document.hidden) return reset();
+        const { style, dithering } = attempt.preferences;
+        const useCode =
+          style === "code" || (style === "random" && Math.random() < 0.5);
+        if (useCode) {
+          playback.code = makeCodeFill(attempt.codeInk, attempt.fontFamily);
+          if (!playback.code) return reset();
+        }
+        const code = playback.code;
         const began = performance.now();
         let lastFrame = -1;
         let lastDitherStep = -1;
@@ -562,7 +688,8 @@ window.__ModuleLoader__.load({
             canvas.height = py;
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
             ctx.fillStyle = attempt.color;
-            grid = dotGrid(w, h);
+            grid = whaleGrid(w, h);
+            code?.resize(grid.cell, dpr);
             if (water) {
               water.canvas.style.maskSize = `${grid.cell}px ${grid.cell}px`;
               water.canvas.style.maskPosition = `${canvas.offsetLeft + grid.left}px ${canvas.offsetTop + grid.top}px`;
@@ -576,11 +703,12 @@ window.__ModuleLoader__.load({
               lastVisibleFrame - firstFrame,
               Math.floor(progress * (lastVisibleFrame - firstFrame + 1)),
             );
-          const ditherStep = attempt.preferences.dithering
-            ? Math.floor((elapsed * ditherHz) / 1000)
-            : null;
+          const ditherStep =
+            !code && dithering ? Math.floor((elapsed * ditherHz) / 1000) : null;
           if (frame !== lastFrame || ditherStep !== lastDitherStep) {
-            paint(ctx, pixels, frame, ditherStep, w, h, grid);
+            ctx.clearRect(0, 0, w, h);
+            if (code) code.paint(ctx, pixels, frame, grid);
+            else paintDots(ctx, pixels, frame, ditherStep, grid);
             lastFrame = frame;
             lastDitherStep = ditherStep;
           }

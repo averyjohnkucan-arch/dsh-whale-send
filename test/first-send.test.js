@@ -3,36 +3,51 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import puppeteer from "puppeteer";
 
 const require = createRequire(import.meta.url);
 const sheet =
   require.resolve("@deepseek-ai/dsh-client-ui-brand-official/assets/breach-atlas-43c5305a3d4d.webp");
-const html = `<!doctype html><style>body{margin:0;display:flex;--dsw-alias-bg-base:white}aside{width:160px;background:#445566;height:100vh}main{flex:1;height:100vh;position:relative}canvas[data-home-whale]{opacity:.18}</style>
-<aside><a href="#sidebar" onclick="event.preventDefault();this.dataset.clicked=1">Sidebar action</a></aside><main data-conversation-content data-content-phase="hero" data-conversation-session="1"><span hidden></span>
+const html = `<!doctype html><style>body{margin:0;display:flex;--dsw-alias-bg-base:white}aside{width:160px;background:#445566;height:100vh}main{flex:1;height:100vh;position:relative}canvas[data-home-whale]{opacity:.18;font-family:monospace;--home-whale-code-ink:#123456}</style>
+<aside><a href="#sidebar" onclick="event.preventDefault();this.dataset.clicked=1">Sidebar action</a><div id="settings"></div></aside><main data-conversation-content data-content-phase="hero" data-conversation-session="1"><div id="frame"></div>
 <div class="native_titleGroup"><span>Welcome heading</span></div><canvas data-home-whale style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></canvas><div data-composer-card><textarea data-composer-input></textarea><button aria-busy="false" class="test_primary">Send</button></div></main>
+<script src="/react.js"></script><script src="/react-dom.js"></script>
 <script>
 const body=document.querySelector('main'),button=document.querySelector('button');
 function send(){document.querySelector('textarea').value='';body.querySelector('.native_titleGroup')?.remove();body.dataset.contentPhase='active';body.querySelector('[data-home-whale]')?.remove();}
 button.onclick=()=>setTimeout(send,750);
 document.querySelector('textarea').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey)send()};
 window.__ModuleLoader__={load(spec){
- const react={useRef:()=>({current:document.querySelector('span')}),useLayoutEffect:fn=>{window.dispose=fn()},createElement:()=>null};
- const dependency=()=>react;dependency.asset=()=>'/atlas.webp';
- spec.factory(dependency).apply({slots:{inject:(key,fn)=>fn(),register:(opts,frame)=>{
-  if(opts.name==='conversation.hero.frame')frame({});
+ const dependency=()=>React;dependency.asset=()=>'/atlas.webp';
+ spec.factory(dependency).apply({slots:{inject:(key,fn)=>fn(),register:(opts,Component)=>{
+  const frame=opts.name==='conversation.hero.frame';
+  const root=ReactDOM.createRoot(document.getElementById(frame?'frame':'settings'));
+  ReactDOM.flushSync(()=>root.render(React.createElement(Component)));
+  if(frame)window.dispose=()=>root.unmount();
  }}});
 }};
 </script><script src="/client.js"></script>`;
 
-test("the whale moves during both fades and the submitted text floats to the screen center", async (t) => {
-  const client = await readFile(new URL("../client.js", import.meta.url));
+async function openFixture(t) {
+  const scripts = new Map([
+    ["/client.js", await readFile(new URL("../client.js", import.meta.url))],
+  ]);
+  for (const pkg of ["react", "react-dom"]) {
+    const dir = dirname(require.resolve(pkg + "/package.json"));
+    scripts.set(
+      "/" + pkg + ".js",
+      await readFile(join(dir, "umd", pkg + ".production.min.js")),
+    );
+  }
   const atlas = await readFile(sheet);
   const server = createServer((req, res) => {
     if (req.url === "/atlas.webp")
       res.writeHead(200, { "content-type": "image/webp" }).end(atlas);
-    else if (req.url === "/client.js")
-      res.writeHead(200, { "content-type": "text/javascript" }).end(client);
+    else if (scripts.has(req.url))
+      res
+        .writeHead(200, { "content-type": "text/javascript" })
+        .end(scripts.get(req.url));
     else res.writeHead(200, { "content-type": "text/html" }).end(html);
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
@@ -45,6 +60,11 @@ test("the whale moves during both fades and the submitted text floats to the scr
   const page = await browser.newPage();
   const url = "http://127.0.0.1:" + server.address().port;
   await page.goto(url);
+  return { page, url };
+}
+
+test("the whale moves during both fades and the submitted text floats to the screen center", async (t) => {
+  const { page, url } = await openFixture(t);
   await page.evaluate(() => {
     window.samples = [];
     window.ditherPaints = [];
@@ -130,7 +150,7 @@ test("the whale moves during both fades and the submitted text floats to the scr
       "[data-whale-send] canvas:not([data-whale-water])",
       (c) => getComputedStyle(c).opacity,
     ),
-    "0.36",
+    "0.27",
   );
   await page.waitForFunction(() => {
     const c = document.querySelector(
@@ -320,4 +340,122 @@ test("the whale moves during both fades and the submitted text floats to the scr
     null,
     "A saved Off choice is preserved",
   );
+});
+
+test("the style selector persists and random picks one renderer per first send", async (t) => {
+  const { page } = await openFixture(t);
+  const key = "dsh-whale-send.preferences";
+  const selector = "#settings select";
+  // Upgrade from 0.1.7 with both effects switched off.
+  await page.evaluate((key) => {
+    localStorage.setItem(
+      key,
+      JSON.stringify({ dithering: false, water: false }),
+    );
+  }, key);
+  await page.reload();
+  assert.equal(await page.$eval(selector, (el) => el.value), "led");
+  await page.select(selector, "code");
+  await page.reload();
+  assert.equal(await page.$eval(selector, (el) => el.value), "code");
+  assert.deepEqual(
+    await page.$$eval("#settings input", (inputs) =>
+      inputs.map(({ checked, disabled }) => [checked, disabled]),
+    ),
+    [
+      [false, true],
+      [false, false],
+    ],
+  );
+
+  await page.evaluate(() => {
+    const body = document.querySelector("main");
+    const native = body.querySelector("[data-home-whale]").cloneNode();
+    window.newChat = (roll) => {
+      body.querySelector("[data-home-whale]")?.remove();
+      body.append(native.cloneNode());
+      body.dataset.conversationSession = String(
+        Number(body.dataset.conversationSession) + 1,
+      );
+      body.dataset.contentPhase = "hero";
+      window.trace = {
+        frames: 0,
+        dots: false,
+        masks: 0,
+        lettering: false,
+        rolls: 0,
+      };
+      Math.random = () => {
+        trace.rolls++;
+        return roll;
+      };
+    };
+    const proto = CanvasRenderingContext2D.prototype;
+    const { clearRect, arc, drawImage, fillText } = proto;
+    const isWhale = (ctx) =>
+      ctx.canvas.matches("[data-whale-send] > canvas:not([data-whale-water])");
+    proto.clearRect = function (...args) {
+      if (isWhale(this)) trace.frames++;
+      return clearRect.apply(this, args);
+    };
+    proto.arc = function (...args) {
+      if (isWhale(this)) trace.dots = true;
+      return arc.apply(this, args);
+    };
+    proto.drawImage = function (...args) {
+      if (isWhale(this) && this.globalCompositeOperation === "destination-in")
+        trace.masks++;
+      return drawImage.apply(this, args);
+    };
+    proto.fillText = function (phrase, ...args) {
+      if (phrase === "ctx.plugin(Agent)" && this.fillStyle === "#123456")
+        trace.lettering = true;
+      return fillText.call(this, phrase, ...args);
+    };
+  });
+
+  async function checkPlayback(expected, roll, expectedRolls) {
+    await page.evaluate((roll) => window.newChat(roll), roll);
+    await page.focus("textarea");
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => window.trace.frames >= 4);
+    const result = await page.$eval("[data-whale-send] > canvas", (canvas) => ({
+      ...window.trace,
+      opacity: getComputedStyle(canvas).opacity,
+      visibleInk: canvas
+        .getContext("2d")
+        .getImageData(0, 0, canvas.width, canvas.height)
+        .data.some((value, index) => index % 4 === 3 && value > 0),
+    }));
+    assert.equal(result.opacity, "0.27");
+    assert.ok(result.visibleInk);
+    assert.equal(result.lettering, expected === "code");
+    assert.equal(result.masks, expected === "code" ? result.frames : 0);
+    assert.equal(result.dots, expected === "led");
+    assert.equal(result.rolls, expectedRolls);
+    assert.equal(await page.$("[data-whale-water]"), null);
+  }
+  await checkPlayback("code", 0.75, 0);
+  await page.select(selector, "led");
+  await checkPlayback("led", 0.25, 0);
+  await page.select(selector, "random");
+  await checkPlayback("code", 0.25, 1);
+  await checkPlayback("led", 0.75, 1);
+  assert.deepEqual(
+    await page.evaluate((key) => JSON.parse(localStorage.getItem(key)), key),
+    { style: "random", dithering: false, water: false },
+  );
+  await page.click("#settings input");
+  await page.reload();
+  assert.equal(await page.$eval(selector, (el) => el.value), "random");
+  assert.equal(await page.$eval("#settings input", (el) => el.checked), true);
+
+  await page.evaluate((key) => {
+    localStorage.setItem(
+      key,
+      JSON.stringify({ style: "unknown", water: false }),
+    );
+  }, key);
+  await page.reload();
+  assert.equal(await page.$eval(selector, (el) => el.value), "led");
 });
